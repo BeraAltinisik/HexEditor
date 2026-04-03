@@ -6,129 +6,147 @@
 
 using namespace std;
 
-// Klasse zur Verwaltung der gesamten Dateiverarbeitung
+// Zentrale Klasse für Binärdateien-Bearbeitung
+// Monolithische Struktur gewählt für übersichtliche Zustandsverwaltung
 class HexEditor {
 private:
     string filename;                      // Speichert den Namen der geladenen Datei
-    vector<unsigned char> data;           // Enthält alle Bytes der Datei
-    bool isLoaded;                        // Gibt an, ob eine Datei erfolgreich geladen wurde
+    vector<unsigned char> data;           // Zentrale Datenstruktur: dynamische Größe, O(1) Zugriff
+    bool isLoaded;                        // Zustandsflag verhindert Operationen auf ungültigen Daten
 
 public:
     // Konstruktor: setzt Anfangszustand
     HexEditor() {
-        isLoaded = false;                 // Standardmäßig ist keine Datei geladen
+        isLoaded = false;                 // Explizite Initialisierung für sauberen Zustand
     }
 
-    // Methode zum Laden einer Datei im Binärmodus
+    // Datei-Lademethode mit robuster Binärdatenverarbeitung
     bool loadFile(string name) {
-        filename = name;                  // Dateiname speichern
+        filename = name;                  // Dateiname für spätere Speicheroperationen merken
 
-        // Datei im Binärmodus öffnen (ios::binary verhindert Textkonvertierungen)
+        // ios::binary ist essentiell: verhindert plattformspezifische CR/LF-Transformationen
+        // die bei Binärdateien zu Datenverfälschung führen würden
         ifstream file(filename, ios::binary);
 
-        // Fehlerprüfung: Datei konnte nicht geöffnet werden
+        // Robuste Fehlerbehandlung vor Dateizugriff
         if (!file) {
             cout << "Datei konnte nicht geöffnet werden.\n";
             return false;
         }
 
-        data.clear();                      // Vorherige Daten löschen, falls Datei bereits geladen war
-        unsigned char byte;                // Temporärer Speicher für das eingelesene Byte
+        data.clear();                      // Bestehende Daten löschen für sauberen Zustand
+        unsigned char byte;                // 8-Bit-Container für einzelnes Byte
 
-        // Byte für Byte einlesen und in den Vektor speichern
+        // Kernfunktion: Sequentielle Binärdatenverarbeitung
+        // reinterpret_cast<char*>(&byte) - Kritischer Cast für Stream-Kompatibilität:
+        // - Stream-API arbeitet mit char* (signed: -128 bis +127)
+        // - Wir benötigen unsigned char für korrekte Byte-Werte (0-255)
+        // - reinterpret_cast wandelt Speicheradresse typsicher um ohne Datenveränderung
         while (file.read(reinterpret_cast<char*>(&byte), 1)) {
-            data.push_back(byte);
+            data.push_back(byte);          // vector auto-expansion, amortisiert O(1)
         }
 
-        file.close();                       // Datei schließen
-        isLoaded = true;                    // Status setzen: Datei ist geladen
+        file.close();                      // Explizite Ressourcenfreigabe
+        isLoaded = true;                   // Atomare Zustandsänderung nach erfolgreichem Laden
 
         cout << "Datei erfolgreich geladen.\n";
         return true;
     }
 
-    // Methode zur Anzeige des Datei-Inhalts als Hexdump
+    // Hex-Dump-Visualisierung mit Standard-16-Byte-Layout
     void displayContent() {
-        if (!isLoaded) {                    // Sicherstellen, dass eine Datei geladen ist
+        // Guard clause: Zustand vor kritischen Operationen prüfen
+        if (!isLoaded) {
             cout << "Keine Datei geladen.\n";
             return;
         }
 
+        // Hauptiteration: Formatierte Ausgabe nach Hex-Editor-Standard
         for (size_t i = 0; i < data.size(); i++) {
 
-            // Neue Zeile alle 16 Bytes für bessere Lesbarkeit
+            // Adresszeile alle 16 Bytes: Standard für optimale Lesbarkeit
             if (i % 16 == 0) {
                 cout << "\nAdresse "
-                    << setw(6) << setfill('0')  // Hexadezimale Adresse immer 6 Stellen
+                    << setw(6) << setfill('0')  // 6-stellige Hex-Adresse mit Nullpadding
                     << hex << i << " : ";
             }
 
-            // Hexadezimale Ausgabe des Bytes
+            // Byte-Ausgabe: 2-stellig hex mit führenden Nullen für einheitliche Spaltenbreite
             cout << setw(2) << setfill('0')
-                << hex << (int)data[i] << " ";
+                << hex << (int)data[i] << " ";  // Cast zu int vermeidet Char-Interpretation
 
-            // Nach 16 Bytes zusätzlich die ASCII-Darstellung ausgeben
+            // ASCII-Bereich nach 16 Bytes für parallele Zeichendarstellung
             if ((i + 1) % 16 == 0) {
-                cout << "  ";
+                cout << "  ";                   // Visuelle Trennung Hex/ASCII
                 for (size_t j = i - 15; j <= i; j++) {
-                    if (isprint(data[j]))      // Druckbare Zeichen als solche anzeigen
+                    // isprint(): Sicherheitsfilter gegen Terminalkontrolle durch Steuerzeichen
+                    if (isprint(data[j]))
                         cout << (char)data[j];
                     else
-                        cout << ".";           // Nicht-druckbare Zeichen als Punkt
+                        cout << ".";            // Standard-Ersatz für non-printable chars
                 }
             }
         }
 
-        cout << dec << "\n";                   // Hexadezimalanzeige beenden, zurück zu Dezimal
+        cout << dec << "\n";                   // Stream-State cleanup: zurück zu Dezimalmodus
     }
 
-    // Methode zum Bearbeiten eines einzelnen Bytes an einer bestimmten Adresse
+    // Byte-Manipulation mit doppelter Sicherheitsvalidierung
     void editByte(size_t address, unsigned char value) {
-        if (!isLoaded) {                       // Sicherstellen, dass eine Datei geladen ist
+        // Erste Validierung: Systemzustand prüfen
+        if (!isLoaded) {
             cout << "Keine Datei geladen.\n";
             return;
         }
 
-        if (address >= data.size()) {          // Prüfen, ob die Adresse innerhalb des gültigen Bereichs liegt
+        // Zweite Validierung: Bounds-Checking verhindert Buffer-Overflow
+        // size_t arithmetic schließt negative Indizes durch unsigned type aus
+        if (address >= data.size()) {
             cout << "Adresse außerhalb des gültigen Bereichs.\n";
             return;
         }
 
-        data[address] = value;                 // Byte im Vektor ändern
+        // Atomare Byte-Modifikation: vector garantiert exception safety
+        data[address] = value;              // Direkter O(1) Zugriff über Index
         cout << "Byte erfolgreich geändert.\n";
     }
 
-    // Methode zum Speichern der Datei zurück auf die Festplatte
+    // Persistierung mit Write-Back-Strategie
     bool saveFile() {
-        if (!isLoaded) {                       // Sicherstellen, dass eine Datei geladen ist
+        // Zustandsvalidierung vor kritischer I/O-Operation
+        if (!isLoaded) {
             cout << "Keine Datei geladen.\n";
             return false;
         }
 
-        // Datei im Binärmodus öffnen
+        // Binärmodus für identische Datenrekonstruktion
         ofstream file(filename, ios::binary);
 
-        if (!file) {                           // Fehlerprüfung: Datei konnte nicht geschrieben werden
+        // I/O-Fehlerbehandlung für Schreiboperationen
+        if (!file) {
             cout << "Fehler beim Speichern.\n";
-            return false;
+            return false;                   // Datenintegrität bei Fehlern erhalten
         }
 
-        // Alle Bytes aus dem Vektor zurückschreiben
+        // Write-Back-Prinzip: Sequentielle Rekonstruktion der Originaldatei
+        // Alle Änderungen aus Memory-Buffer persistent machen
         for (size_t i = 0; i < data.size(); i++) {
+            // Symmetrischer reinterpret_cast zu loadFile() für Konsistenz
             file.write(reinterpret_cast<char*>(&data[i]), 1);
         }
 
-        file.close();                          // Datei schließen
+        file.close();                       // Explizite Ressourcenfreigabe mit automatischem Flush
         cout << "Datei gespeichert.\n";
         return true;
     }
 
-    // Menü zur Benutzersteuerung
+    // Benutzerinterface mit zustandsbasierter Ablaufsteuerung
     void runMenu() {
         int choice;
 
+        // Hauptinteraktionsschleife: Event-driven programming pattern
         do {
-            // Menüoptionen ausgeben
+            // Benutzerfreundliche Menüdarstellung
             cout << "\n1 - Datei laden\n";
             cout << "2 - Inhalt anzeigen\n";
             cout << "3 - Byte bearbeiten\n";
@@ -137,39 +155,41 @@ public:
             cout << "Auswahl: ";
             cin >> choice;
 
+            // Funktionsverteilung: Jeder Branch kapselt spezifische Verantwortlichkeit
             if (choice == 1) {
                 string name;
                 cout << "Dateiname: ";
                 cin >> name;
-                loadFile(name);                // Datei laden
+                loadFile(name);                // Delegierung an spezialisierte Methode
             }
             else if (choice == 2) {
-                displayContent();              // Dateiinhalt anzeigen
+                displayContent();              // Read-only Operation ohne Parameter
             }
             else if (choice == 3) {
-                size_t address;
-                int value;
+                size_t address;                // size_t verhindert negative Adressen
+                int value;                     // int für flexible Hex-Eingabe
 
                 cout << "Adresse (dezimal eingeben): ";
-                cin >> address;                // Adresse eingeben
+                cin >> address;
 
                 cout << "Neuer Wert (Hex, z.B. FF): ";
-                cin >> hex >> value;           // Hexadezimalwert eingeben
-                cin >> dec;                    // wieder auf Dezimal zurückstellen
+                cin >> hex >> value;           // Stream-Manipulator für Hex-Parsing
+                cin >> dec;                    // Stream-State-Reset für Folgeoperationen
 
-                editByte(address, static_cast<unsigned char>(value)); // Byte ändern
+                // Sichere Konvertierung mit explizitem Cast
+                editByte(address, static_cast<unsigned char>(value));
             }
             else if (choice == 4) {
-                saveFile();                    // Datei speichern
+                saveFile();                    // Persistierung mit Fehlerbehandlung
             }
 
-        } while (choice != 5);                 // Menü wiederholen, bis der Benutzer Beenden wählt
+        } while (choice != 5);                 // Exit-Condition für sauberen Programmabschluss
     }
 };
 
-// Hauptprogramm
+// Hauptprogramm - Einstiegspunkt und Objektlebenszyklus
 int main() {
-    HexEditor editor;                           // Objekt der HexEditor-Klasse erstellen
-    editor.runMenu();                            // Menü starten
-    return 0;
+    HexEditor editor;                          // Stack-Allokation für automatisches Cleanup
+    editor.runMenu();                          // Delegation an Hauptfunktionalität
+    return 0;                                  // Expliziter Success-Return
 }

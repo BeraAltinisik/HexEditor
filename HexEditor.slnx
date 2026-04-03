@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="HexEditor/HexEditor.vcxproj" />
+  <Project Path="HexEditor/HexEditor.vcxproj" Id="fd9eea9a-9820-4f9e-852e-c6d03724fbbf" />
 </Solution>
